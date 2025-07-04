@@ -258,6 +258,7 @@ tramp
 temp_audio.mp3
 *.tmp
 *.temp
+ui_state.json
 
 # Log files
 *.log

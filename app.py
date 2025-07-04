@@ -11,6 +11,7 @@ import re
 import threading
 import time
 from tkinter import filedialog
+import json
 # from mutagen.mp3 import MP3 # Option: Remove if no duration fallback planned
 # from mutagen import MutagenError # Option: Remove if no duration fallback planned
 try:
@@ -39,6 +40,17 @@ SEEK_INTERVAL_SECONDS = 5 # Number of seconds to jump forward/backward
 TEXTBOX_PLACEHOLDER_TEXT = "Enter text here or load from a file..."
 # Choose a placeholder color that works reasonably well in both light/dark modes
 TEXTBOX_PLACEHOLDER_COLOR = "#888888" # Medium-Gray
+CONFIG_PATH = "ui_state.json"
+
+
+class StoredUiState:
+    def __init__(self, rate: int = 0, pitch: int = 0, voice: str = None, dark: bool = None):
+        if dark is None:
+            dark = ctk.get_appearance_mode() == "Dark"
+        self.rate = rate
+        self.pitch = pitch
+        self.voice = voice
+        self.dark = dark
 
 # --- Main Application ---
 class EdgeTTSApp(ctk.CTk):
@@ -84,15 +96,15 @@ class EdgeTTSApp(ctk.CTk):
         self.textbox_placeholder_active = False
         self.default_textbox_color = None # Will be fetched after widget creation
 
-        self._build_ui() # Build the UI
+        ui_state = self.load_ui_state()
+        self._build_ui(ui_state) # Build the UI
 
         # Initial Actions
         self.after(10, self._fetch_default_textbox_color) # Schedule fetching color early
         self.after(20, self._set_initial_textbox_placeholder) # Set initial placeholder state after color fetch attempt
 
-        self.update_rate_label(0); self.update_pitch_label(0) # Set initial slider labels
         if self.just_playback_initialized:
-             self.update_status("Loading voices..."); self.load_voices_async()
+             self.update_status("Loading voices..."); self.load_voices_async(ui_state)
         else:
              self.update_status("❌ Error: Audio library init failed. Audio disabled.");
              self.set_ui_state('error_no_audio')
@@ -103,7 +115,7 @@ class EdgeTTSApp(ctk.CTk):
         print(f"INFO: Actual initial mode (after System resolution): '{ctk.get_appearance_mode()}'")
 
 
-    def _build_ui(self):
+    def _build_ui(self, ui_state: StoredUiState = StoredUiState()):
         """Creates all user interface elements (widgets)."""
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1) # Textbox row expands
@@ -125,6 +137,13 @@ class EdgeTTSApp(ctk.CTk):
             offvalue=0  # Represents "Dark" mode OFF (i.e., Light mode)
         )
         self.theme_switch.grid(row=0, column=1, padx=(10, 5), sticky="e")
+
+        if ui_state.dark:
+            self.theme_switch.select()
+            ctk.set_appearance_mode("dark")
+        else:
+            self.theme_switch.deselect()
+            ctk.set_appearance_mode("light")
 
         self.load_file_btn = ctk.CTkButton(input_header_frame, text="Load File...", width=100, command=self.load_text_from_file)
         self.load_file_btn.grid(row=0, column=2, padx=(0, 5), sticky="e")
@@ -162,14 +181,14 @@ class EdgeTTSApp(ctk.CTk):
         rate_adj_frame = ctk.CTkFrame(adj_frame); rate_adj_frame.grid(row=0, column=0, padx=5, pady=(5,2), sticky="ew")
         rate_adj_frame.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(rate_adj_frame, text="Rate:", font=ctk.CTkFont(size=11)).grid(row=0, column=0, padx=(5,0), pady=5, sticky="w")
-        self.rate_slider = ctk.CTkSlider(rate_adj_frame, from_=-100, to=100, number_of_steps=40, command=self.update_rate_label); self.rate_slider.set(0); self.rate_slider.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
-        self.rate_value_label = ctk.CTkLabel(rate_adj_frame, text="0%", width=40, anchor="e"); self.rate_value_label.grid(row=0, column=2, padx=(0,5), pady=5, sticky="e")
+        self.rate_slider = ctk.CTkSlider(rate_adj_frame, from_=-100, to=100, number_of_steps=40, command=self.update_rate_label); self.rate_slider.set(ui_state.rate); self.rate_slider.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+        self.rate_value_label = ctk.CTkLabel(rate_adj_frame, text=f"{ui_state.rate}%", width=40, anchor="e"); self.rate_value_label.grid(row=0, column=2, padx=(0, 5), pady=5, sticky="e")
         self.rate_reset_btn = ctk.CTkButton(rate_adj_frame, text="Reset", width=50, command=lambda: self.reset_slider("rate")); self.rate_reset_btn.grid(row=0, column=3, padx=(0,5), pady=5)
         pitch_adj_frame = ctk.CTkFrame(adj_frame); pitch_adj_frame.grid(row=1, column=0, padx=5, pady=(2,5), sticky="ew")
         pitch_adj_frame.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(pitch_adj_frame, text="Pitch:", font=ctk.CTkFont(size=11)).grid(row=0, column=0, padx=(5,0), pady=5, sticky="w")
-        self.pitch_slider = ctk.CTkSlider(pitch_adj_frame, from_=-50, to=50, number_of_steps=20, command=self.update_pitch_label); self.pitch_slider.set(0); self.pitch_slider.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
-        self.pitch_value_label = ctk.CTkLabel(pitch_adj_frame, text="0Hz", width=40, anchor="e"); self.pitch_value_label.grid(row=0, column=2, padx=(0,5), pady=5, sticky="e")
+        self.pitch_slider = ctk.CTkSlider(pitch_adj_frame, from_=-50, to=50, number_of_steps=20, command=self.update_pitch_label); self.pitch_slider.set(ui_state.pitch); self.pitch_slider.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+        self.pitch_value_label = ctk.CTkLabel(pitch_adj_frame, text=f"{ui_state.pitch}Hz", width=40, anchor="e"); self.pitch_value_label.grid(row=0, column=2, padx=(0, 5), pady=5, sticky="e")
         self.pitch_reset_btn = ctk.CTkButton(pitch_adj_frame, text="Reset", width=50, command=lambda: self.reset_slider("pitch")); self.pitch_reset_btn.grid(row=0, column=3, padx=(0,5), pady=5)
 
         # --- Generate Button ---
@@ -229,6 +248,21 @@ class EdgeTTSApp(ctk.CTk):
             # Reschedule if textbox doesn't exist or color isn't ready yet
              self.after(50, self._fetch_default_textbox_color)
 
+    def load_ui_state(self) -> StoredUiState:
+        """Loads audio settings from a JSON configuration file or returns defaults."""
+        try:
+            if os.path.exists(CONFIG_PATH):
+                with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+                    defaults = StoredUiState()
+                    data = json.load(f)
+                    rate = int(data.get("rate", defaults.rate))
+                    pitch = int(data.get("pitch", defaults.pitch))
+                    voice = data.get("voice", defaults.voice)
+                    dark = data.get("dark", defaults.dark)
+                    return StoredUiState(rate=rate, pitch=pitch, voice=voice, dark=dark)
+        except Exception as e:
+            print(f"WARN: Failed to load audio settings from JSON: {e}")
+        return StoredUiState()  # Default settings if file missing or error
 
     def _set_initial_textbox_placeholder(self):
         """Sets the placeholder text and color if the textbox is empty."""
@@ -503,11 +537,14 @@ class EdgeTTSApp(ctk.CTk):
             self.set_ui_state(current_state)
 
     # --- Asynchronous Operations & Threading ---
-    def load_voices_async(self):
+    def load_voices_async(self, ui_state: StoredUiState = None):
         """Starts a thread to load the voice list asynchronously."""
         self.set_ui_state('loading')
         self.update_status("Loading voice list...")
-        thread = threading.Thread(target=self._run_async_task, args=(self._load_voices_task,), daemon=True)
+        if ui_state:
+            thread = threading.Thread(target=self._run_async_task, args=(self._load_voices_task, ui_state.voice), daemon=True)
+        else:
+            thread = threading.Thread(target=self._run_async_task, args=(self._load_voices_task,), daemon=True)
         thread.start()
 
     def start_generate_speech_thread(self):
@@ -549,7 +586,7 @@ class EdgeTTSApp(ctk.CTk):
             self.after(0, lambda: self.update_status(f"❌ Error during async operation: {e}"))
             self.after(0, lambda: self.set_ui_state('idle')) # Revert to idle state on error
 
-    async def _load_voices_task(self):
+    async def _load_voices_task(self, start_voice: str = None):
         """Coroutine to fetch the list of voices from edge-tts."""
         try:
             voices = await edge_tts.list_voices()
@@ -559,25 +596,28 @@ class EdgeTTSApp(ctk.CTk):
             self.voices_dict = {f"{v['FriendlyName']} ({v['Locale']}, {v['Gender']})": v['ShortName'] for v in voices}
             self._all_voice_display_names = list(self.voices_dict.keys())
             # Update the UI on the main thread when done
-            self.after(0, self._update_voice_dropdown_ui, self._all_voice_display_names)
+            self.after(0, self._update_voice_dropdown_ui, self._all_voice_display_names, start_voice)
         except Exception as e:
             print(f"ERROR: Failed to load voices: {e}")
             self.after(0, lambda: self.update_status(f"❌ Error loading voices: {e}"))
             self.after(0, lambda: self.set_ui_state('idle')) # Set to idle if loading fails
 
-    def _update_voice_dropdown_ui(self, voice_list: list[str]):
+    def _update_voice_dropdown_ui(self, voice_list: list[str], start_voice: str = None):
         """Updates the voice ComboBox on the main thread."""
         if not hasattr(self, 'voice_dropdown') or not self.voice_dropdown.winfo_exists(): return
 
         if voice_list:
             self.voice_dropdown.configure(values=voice_list)
-            self.voice_dropdown.set(voice_list[0]) # Select the first voice by default
             if hasattr(self, 'voice_search_entry') and self.voice_search_entry.winfo_exists():
                  self.voice_search_entry.configure(state=ctk.NORMAL)
             self.update_status("Ready.")
             # Determine final state based on whether audio is already loaded
             current_state = 'generated' if self.audio_file_path else 'idle'
             self.set_ui_state(current_state)
+            if start_voice and start_voice in voice_list:
+                self.voice_dropdown.set(start_voice)
+            else:
+                self.voice_dropdown.set(voice_list[0]) # Select the first voice by default
         else:
             # If the list is empty (error during load)
             self.voice_dropdown.configure(values=["No voices found"], state=ctk.DISABLED)
@@ -1200,8 +1240,27 @@ class EdgeTTSApp(ctk.CTk):
                 self.audio_file_path = None
                 self.audio_duration = 0
 
+    def store_ui_state(self):
+        """Saves the current audio settings to a file."""
+        voice = self.voice_dropdown.get()
+        if (not voice
+                or voice == "Select Voice"
+                or "Loading" in voice
+                or "No match" in voice
+                or voice == "No voices found"):
+            voice = None
+
+        settings = StoredUiState(int(self.rate_slider.get()), int(self.pitch_slider.get()), voice)
+        try:
+            with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
+                json.dump(settings.__dict__, f)
+            print(f"INFO: Audio settings saved to {CONFIG_PATH}")
+        except Exception as e:
+            print(f"ERROR: Failed to save audio settings: {e}")
 
     def on_closing(self):
+        self.store_ui_state()
+
         """Called when the application window is closed."""
         print("INFO: Closing application...")
         self._stop_progress_updater() # Stop the UI update loop
